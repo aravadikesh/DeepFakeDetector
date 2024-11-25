@@ -7,7 +7,7 @@ import torch.nn as nn
 from os.path import join
 from PIL import Image as pil_image
 from tqdm import tqdm
-from network.models import model_selection, return_pytorch04_xception
+from network.models import model_selection
 from dataset.transform import xception_default_data_transforms
 import pdb
 import json
@@ -225,21 +225,210 @@ class VideoEvaluator:
             # return json_output_path
             return json_results
         
+from sklearn.metrics import (
+    accuracy_score, precision_score, 
+    recall_score, f1_score, 
+    confusion_matrix, roc_curve, auc
+)
+import pandas as pd
+import matplotlib.pyplot as plt
+
+def evaluate_model_performance(
+    fake_videos_dir, 
+    real_videos_dir, 
+    evaluator, 
+    output_dir='./performance_results',
+    num_runs=5, 
+    start_frame=0, 
+    end_frame=None
+):
+
+    """
+    Comprehensive performance evaluation for deepfake detection model.
+    
+    Args:
+        fake_videos_dir (str): Directory containing fake videos
+        real_videos_dir (str): Directory containing real videos
+        evaluator (VideoEvaluator): Initialized video evaluator
+        num_runs (int): Number of repeated evaluations
+        start_frame (int): Starting frame for video processing
+        end_frame (int): Ending frame for video processing
+    
+    Returns:
+        dict: Performance metrics and results
+    """
+
+    # Create output directory
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Collect video paths
+    fake_videos = [
+        os.path.join(fake_videos_dir, f) 
+        for f in os.listdir(fake_videos_dir) 
+        if f.endswith(('.mp4', '.avi', '.mov'))
+    ]
+    
+    real_videos = [
+        os.path.join(real_videos_dir, f) 
+        for f in os.listdir(real_videos_dir) 
+        if f.endswith(('.mp4', '.avi', '.mov'))
+    ]
+    
+    # Combine videos with labels
+    all_videos = [
+        (path, 'fake') for path in fake_videos
+    ] + [
+        (path, 'real') for path in real_videos
+    ]
+    
+    # Results storage
+    all_results = []
+    
+    for run in range(num_runs):
+        np.random.shuffle(all_videos)
+        
+        run_results = []
+        for video_path, true_label in all_videos:
+            try:
+                result = evaluator.evaluate_video(
+                    video_path, 
+                    start_frame=start_frame, 
+                    end_frame=end_frame, 
+                    output_mode='json'
+                )
+                
+                # Determine prediction
+                predicted_label = 'fake' if result['average_prediction'] >= 0.5 else 'real'
+                
+                run_results.append({
+                    'run': run,
+                    'video': os.path.basename(video_path),
+                    'true_label': true_label,
+                    'predicted_label': predicted_label,
+                    'average_prediction': result['average_prediction'],
+                    'confidence_real': result['confidence_scores']['real'],
+                    'confidence_fake': result['confidence_scores']['fake']
+                })
+            except Exception as e:
+                print(f"Error processing {video_path}: {e}")
+        
+        all_results.extend(run_results)
+    
+    # Convert to DataFrame
+    results_df = pd.DataFrame(all_results)
+    
+    # Compute metrics
+    metrics = {
+        'accuracy': accuracy_score(results_df['true_label'], results_df['predicted_label']),
+        'precision': precision_score(results_df['true_label'], results_df['predicted_label'], pos_label='fake'),
+        'recall': recall_score(results_df['true_label'], results_df['predicted_label'], pos_label='fake'),
+        'f1_score': f1_score(results_df['true_label'], results_df['predicted_label'], pos_label='fake')
+    }
+    
+    # Visualization
+    plt.figure(figsize=(15, 5))
+    
+    # Prediction Distribution
+    plt.subplot(131)
+    results_df.boxplot(column='average_prediction', by=['true_label'])
+    plt.title('Prediction Distribution')
+    plt.suptitle('')
+    
+    # Confusion Matrix
+    plt.subplot(132)
+    cm = confusion_matrix(results_df['true_label'], results_df['predicted_label'])
+    plt.imshow(cm, interpolation='nearest', cmap='Blues')
+    plt.title('Confusion Matrix')
+    plt.colorbar()
+    
+    # ROC Curve
+    plt.subplot(133)
+    fpr, tpr, _ = roc_curve(results_df['true_label'] == 'fake', results_df['average_prediction'])
+    roc_auc = auc(fpr, tpr)
+    plt.plot(fpr, tpr, label=f'ROC Curve (AUC = {roc_auc:.2f})')
+    plt.plot([0, 1], [0, 1], linestyle='--')
+    plt.title('ROC Curve')
+    plt.legend()
+    
+    plt.tight_layout()
+    plt.show()
+
+    # Save results DataFrame
+    results_csv_path = os.path.join(output_dir, 'performance_results.csv')
+    results_df.to_csv(results_csv_path, index=False)
+    
+    # Save metrics to JSON
+    metrics_json_path = os.path.join(output_dir, 'performance_metrics.json')
+    with open(metrics_json_path, 'w') as f:
+        json.dump({
+            'metrics': {k: float(v) for k, v in metrics.items()},
+            'roc_auc': float(roc_auc)
+        }, f, indent=4)
+    
+    # Save visualization
+    plt_path = os.path.join(output_dir, 'performance_plots.png')
+    plt.savefig(plt_path)
+    plt.close()  # Close the plot to free memory
+    
+    print(f"Results saved in {output_dir}:")
+    print(f"- CSV Results: {results_csv_path}")
+    print(f"- Metrics JSON: {metrics_json_path}")
+    print(f"- Performance Plots: {plt_path}")
+    
+    return {
+        'metrics': metrics,
+        'results_df': results_df,
+        'roc_auc': roc_auc,
+        'output_paths': {
+            'results_csv': results_csv_path,
+            'metrics_json': metrics_json_path,
+            'performance_plots': plt_path
+        }
+    }
+    
 
 if __name__ == '__main__':
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--video_path', '-i', type=str, required=True)
-    parser.add_argument('--model_path', '-m', type=str, default=None)
-    parser.add_argument('--output_path', '-o', type=str, default='.')
-    parser.add_argument('--start_frame', type=int, default=0)
-    parser.add_argument('--end_frame', type=int, default=None)
-    parser.add_argument('--cuda', action='store_true')
-    args = parser.parse_args()
+    # Example usage
+    evaluator = VideoEvaluator(output_path='./results')
     
-    evaluator = VideoEvaluator(args.model_path, args.output_path, args.cuda)
-    if os.path.isdir(args.video_path):
-        for video in os.listdir(args.video_path):
-            evaluator.evaluate_video(join(args.video_path, video), args.start_frame, args.end_frame)
-    else:
-        evaluator.evaluate_video(args.video_path, args.start_frame, args.end_frame)
+    performance_results = evaluate_model_performance(
+        fake_videos_dir='/Users/aravadikesh/Documents/GitHub/DeepFakeDetector/video_detector/SDFVD/videos_fake',
+        real_videos_dir='/Users/aravadikesh/Documents/GitHub/DeepFakeDetector/video_detector/SDFVD/videos_real', 
+        evaluator=evaluator,
+        output_dir='./evaluation_results',
+        num_runs=1
+    )
+    
+    # Print metrics
+    print("Performance Metrics:")
+    for metric, value in performance_results['metrics'].items():
+        print(f"{metric}: {value}")
+        
+
+# if __name__ == '__main__':
+#     # import argparse
+#     # parser = argparse.ArgumentParser()
+#     # parser.add_argument('--video_path', '-i', type=str, required=True)
+#     # parser.add_argument('--model_path', '-m', type=str, default=None)
+#     # parser.add_argument('--output_path', '-o', type=str, default='.')
+#     # parser.add_argument('--start_frame', type=int, default=0)
+#     # parser.add_argument('--end_frame', type=int, default=None)
+#     # parser.add_argument('--cuda', action='store_true')
+#     # args = parser.parse_args()
+
+#     # args.video_path = '/Users/aravadikesh/Documents/GitHub/DeepFakeDetector/video_detector/SDFVD/videos_fake/vs1.mp4'
+#     # args.output_path = '/Users/aravadikesh/Documents/GitHub/DeepFakeDetector/video_detector/results'
+    
+#     # evaluator = VideoEvaluator(args.model_path, args.output_path, args.cuda)
+#     # if os.path.isdir(args.video_path):
+#     #     for video in os.listdir(args.video_path):
+#     #         evaluator.evaluate_video(join(args.video_path, video), args.start_frame, args.end_frame)
+#     # else:
+#     #     evaluator.evaluate_video(args.video_path, args.start_frame, args.end_frame)
+
+
+#     video_path = '/Users/aravadikesh/Documents/GitHub/DeepFakeDetector/video_detector/SDFVD/videos_fake/vs1.mp4'
+#     output_path = '/Users/aravadikesh/Documents/GitHub/DeepFakeDetector/video_detector/results'
+#     evaluator = VideoEvaluator(output_path)
+    
+#     jsonR = evaluator.evaluate_video(video_path, output_mode='json')
