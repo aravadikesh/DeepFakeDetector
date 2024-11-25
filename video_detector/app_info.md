@@ -72,6 +72,14 @@ brew install cmake
 brew install openblas
 ```
 
+### On Windows
+
+1. **Install CMake**: Download CMake from [https://cmake.org/download/](https://cmake.org/download/). During installation, ensure you check the option to add CMake to your system PATH.
+
+2. **Install Visual Studio Build Tools**: Download and install the Visual Studio Build Tools from [https://visualstudio.microsoft.com/downloads/?q=build+tools#build-tools-for-visual-studio-2022](https://visualstudio.microsoft.com/downloads/?q=build+tools#build-tools-for-visual-studio-2022).
+
+3. **Restart Your System**: After installation, restart your computer to ensure all environment variables are properly configured.
+4. 
 ### 4. Install Dependencies
 ```bash
 pip install -r requirements.txt
