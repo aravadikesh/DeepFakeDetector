@@ -222,3 +222,8 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+# !git clone https://github.com/polimi-ispl/icpr2020dfdc
+# !pip install efficientnet-pytorch
+# !pip install -U git+https://github.com/albu/albumentations > /dev/null
+# %cd icpr2020dfdc/notebook
